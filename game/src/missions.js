@@ -1,176 +1,223 @@
-// SOLMAR — missions.js: the story. Five missions that pay off the Reyes Garage debt
-// to Vera Castellanos. Each mission is a list of steps; a step is a small job
-// (go somewhere, steal a car, survive, deliver on a timer, take out guards, lose
-// the cops) with an on-screen objective and a world marker. Dialogue is shown as
-// subtitle lines through the event queue.
+// The five story missions. Each mission is a list of steps; a step is a
+// place to reach, a thing to do, a timer to beat, or a count to reach.
+// Completing a mission pays its reward, writes the save, and opens the
+// next one. The fifth ends the story.
+import { CFG } from './config.js';
+import { spawnGuard } from './entities.js';
+import { writeSave } from './save.js';
 
-import { MISSIONS } from './config.js';
-import { spawnPed, addHeat } from './entities.js';
-import { makeCar } from './vehicles.js';
-
-// Push subtitle lines spaced so the renderer shows them one after another.
-export function say(G, lines) {
-  if (!lines) return;
-  let t = G.time + 0.1;
-  for (const line of lines) {
-    G.events.push({ text: `${line.who}: "${line.text}"`, at: t });
-    t += 4.5;
-  }
-}
-
-function lm(G, kind) {
-  return G.city.landmarks[kind];
-}
-
-// The street in front of a landmark building (its centre + half height + margin),
-// so a mission target is always reachable by car or on foot.
-function front(G, kind) {
-  const l = lm(G, kind);
-  return { x: l.x, y: l.y + l.h / 2 + 46 };
-}
-
-const DEFS = [
+export const MISSIONS = [
   {
+    id: 0,
     name: 'Welcome Home',
-    reward: 500,
     intro: [
-      { who: 'Milo', text: 'Five years away. Solmar has not changed a bit.' },
-      { who: 'Ray', text: 'Milo! The garage is in hock to La Reina. We need wheels and cash — fast.' },
+      'Ray: Milo. You made it back to Solmar.',
+      'Ray: Your brother owes La Reina five thousand. Start by getting wheels.',
     ],
+    outro: 'Ray: Good. Five hundred in your pocket. Now go see about a faster car.',
+    reward: CFG.missions.m1Reward,
     steps: [
-      { type: 'enterCar', text: 'Get a car — walk up to one and press E' },
-      { type: 'goto', at: (G) => front(G, 'docks'), radius: 70, text: 'Pick up the package at the Docks' },
-      { type: 'driveTo', at: (G) => front(G, 'garage'), radius: 70, text: 'Bring the package back to Reyes Garage' },
+      { text: 'Get a car', kind: 'car' },
+      { text: 'Drive to the Docks', kind: 'goto', target: { x: 160, y: 1924 }, radius: 70 },
+      { text: 'Drive to the Garage', kind: 'goto', target: { x: 800, y: 2564 }, radius: 70 },
     ],
-    outro: [{ who: 'Ray', text: 'That is the first payment. La Reina does not wait, Milo.' }],
   },
   {
+    id: 1,
     name: 'Hot Wheels',
-    reward: 1200,
     intro: [
-      { who: 'Ray', text: 'La Reina wants a Comet GT. There is one parked at the Marina. Take it — quietly.' },
-      { who: 'Milo', text: 'Quietly. Sure.' },
+      'Ray: La Reina keeps a pink Comet GT down at the Marina. Bring it to the Garage.',
+      'Ray: And keep it quiet. The owner will not miss it till morning.',
     ],
-    steps: [
-      { type: 'goto', at: (G) => lm(G, 'marina'), radius: 80, text: 'Get to the Solmar Marina' },
-      {
-        type: 'steal', text: 'Steal the Comet GT — press E beside it',
-        onStart(G) {
-          let car = G.cars.find((c) => c.type === 'sport' && !c.dead);
-          if (!car) {
-            const m = lm(G, 'marina');
-            car = makeCar('sport', m.x, m.y + 40, 0, 'parked', null);
-            G.cars.push(car);
-          }
-          G.mission.targetCar = car;
-        },
-      },
-      { type: 'driveTo', at: (G) => front(G, 'garage'), radius: 70, text: 'Bring the Comet GT to the garage' },
-    ],
-    outro: [{ who: 'Ray', text: 'Keep this. Things are about to get loud.' }],
-    onComplete(G) {
+    outro: 'Ray: The Comet is yours now, and so is this pistol. You will need both.',
+    reward: CFG.missions.m2Reward,
+    onComplete: (G) => {
       G.player.hasPistol = true;
       G.player.weapon = 'pistol';
-      G.events.push({ text: 'New weapon: Pistol — aim with the mouse, click to fire, Q to holster', at: G.time });
     },
+    steps: [
+      { text: 'Go to the Marina', kind: 'goto', target: { x: 480, y: 2960 }, radius: 80 },
+      { text: 'Steal the Comet GT', kind: 'sport' },
+      { text: 'Take it to the Garage', kind: 'goto', target: { x: 800, y: 2564 }, radius: 70 },
+    ],
   },
   {
+    id: 2,
     name: 'Heat Wave',
-    reward: 1500,
     intro: [
-      { who: 'Vera', text: 'Milo Reyes. You drive for me now. First, prove you can shake my police.' },
+      'Ray: The Marina job made the news. Solmar PD is all over you.',
+      'Ray: Survive the heat, then lose it. Do not get caught.',
     ],
+    outro: 'Ray: Clean. The heat is off you — for now.',
+    reward: CFG.missions.m3Reward,
     steps: [
       {
-        type: 'survive', seconds: 60, text: 'Survive the heat — 60 seconds with the PD on you',
-        onStart(G) {
-          addHeat(G, 60);
-        },
+        text: 'Survive the heat',
+        kind: 'timer',
+        timer: CFG.missions.m3Survive,
+        onStart: (G) => G.setHeat(CFG.wanted.max),
       },
-      { type: 'escape', text: 'Now disappear — lose the cops completely' },
+      { text: 'Lose the heat', kind: 'stars0' },
     ],
-    outro: [{ who: 'Vera', text: 'Not bad. You might be worth the trouble after all.' }],
   },
   {
+    id: 3,
     name: 'The Drop',
-    reward: 2000,
     intro: [
-      { who: 'Vera', text: 'A package. Northside clinic. The PD knows the route — drive like it.' },
+      'Ray: A package for the hospital. Seventy-five seconds, no excuses.',
+      'Ray: The tower first, then the hospital. Move.',
     ],
+    outro: 'Ray: Delivered. La Reina is watching, Milo. Keep it clean.',
+    reward: CFG.missions.m4Reward,
     steps: [
-      { type: 'goto', at: (G) => front(G, 'tower'), radius: 70, text: 'Pick up the package at Castellanos Tower' },
+      { text: 'Go to the tower', kind: 'goto', target: { x: 1760, y: 1556 }, radius: 90 },
       {
-        type: 'deliver', at: (G) => front(G, 'hospital'), radius: 70, seconds: 75,
-        text: 'Deliver to Solmar General — 75 seconds',
-        onStart(G) {
-          addHeat(G, 20);
-        },
+        text: 'Deliver to the hospital',
+        kind: 'goto',
+        target: { x: 2400, y: 910 },
+        radius: 70,
+        timer: CFG.missions.m4Timer,
+        timerFail: true,
+        onStart: (G) => G.addHeat(CFG.missions.m4DeliverHeat),
       },
     ],
-    outro: [{ who: 'Vera', text: 'Delivered. Two jobs left on your tab, Milo.' }],
   },
   {
+    id: 4,
     name: "La Reina's Due",
-    reward: 5000,
     intro: [
-      { who: 'Vera', text: 'Last job. My guards will test you. Pass, and the garage is yours again.' },
-      { who: 'Milo', text: 'Then let us finish this.' },
+      'Vera Castellanos: Milo Reyes. You owe me five thousand, and I am done waiting.',
+      'Vera: My guards are at the tower. Come and settle it.',
     ],
+    outro: 'The debt is paid. Solmar is yours again, Milo Reyes.',
+    reward: CFG.missions.m5Reward,
     steps: [
-      { type: 'goto', at: (G) => front(G, 'tower'), radius: 80, text: 'Go to Castellanos Tower' },
+      { text: 'Go to the tower', kind: 'goto', target: { x: 1760, y: 1556 }, radius: 90 },
       {
-        type: 'kill', count: 4, text: "Deal with Vera's guards",
-        onStart(G) {
-          const t = lm(G, 'tower');
-          for (let i = 0; i < 4; i++) {
-            const g = spawnPed(G, t.x - 90 + i * 60, t.y + t.h / 2 + 60 + (i % 2) * 40, {
-              kind: 'guard', hp: 60, color: '#5a1f1f',
-            });
-            g.state = 'walk';
-          }
-          G.mission.kills = 0;
+        text: "Take down La Reina's guards",
+        kind: 'kills',
+        count: CFG.missions.m5Guards,
+        onStart: (G) => {
+          const spots = [
+            { x: 1700, y: 1530 },
+            { x: 1820, y: 1530 },
+            { x: 1730, y: 1590 },
+            { x: 1790, y: 1590 },
+          ];
+          for (const s of spots) spawnGuard(G, s.x, s.y);
         },
       },
       {
-        type: 'escape', text: 'Get out of there — lose the cops',
-        onStart(G) {
-          addHeat(G, 80);
-        },
+        text: 'Lose the heat',
+        kind: 'stars0',
+        onStart: (G) => G.setHeat(CFG.missions.m5EscapeHeat),
       },
-    ],
-    outro: [
-      { who: 'Vera', text: 'The debt is cleared. Solmar is yours, Milo Reyes.' },
-      { who: 'Milo', text: 'The city never really lets you go. Good thing I like it here.' },
     ],
   },
 ];
 
 export function startMission(G, index) {
-  const def = DEFS[index];
-  if (!def) return;
+  const def = MISSIONS[index];
   G.mission = {
-    index,
     def,
+    index,
     step: 0,
-    timer: 0,
-    kills: 0,
-    targetCar: null,
     active: true,
-    failed: false,
-    failedAt: 0,
-    startedAt: G.time,
+    kills: 0,
+    timer: 0,
+    timerMax: 0,
+    stepStarted: false,
   };
-  say(G, def.intro);
-  startStep(G);
+  enterStep(G);
+  G.say(def.intro);
 }
 
-function startStep(G) {
+function enterStep(G) {
   const m = G.mission;
   const step = m.def.steps[m.step];
-  if (!step) return;
-  m.timer = step.seconds || 0;
+  m.stepStarted = true;
+  m.timer = step.timer || 0;
+  m.timerMax = step.timer || 0;
   if (step.onStart) step.onStart(G);
-  G.events.push({ text: `Mission: ${m.def.name} — ${step.text}`, at: G.time });
+}
+
+function advanceStep(G) {
+  const m = G.mission;
+  m.step++;
+  if (m.step >= m.def.steps.length) {
+    completeMission(G);
+    return;
+  }
+  enterStep(G);
+}
+
+export function restartMission(G) {
+  const index = G.mission ? G.mission.index : 0;
+  startMission(G, index);
+}
+
+function completeMission(G) {
+  const m = G.mission;
+  const def = m.def;
+  G.player.cash += def.reward;
+  G.completedMissions.add(m.index);
+  if (def.onComplete) def.onComplete(G);
+  m.active = false;
+  G.audio.missionDone();
+  G.say([def.outro]);
+  const save = {
+    cash: G.player.cash,
+    missionIndex: m.index + 1 < MISSIONS.length ? m.index + 1 : -1,
+    completed: G.completedMissions.size,
+    x: Math.round(G.player.x * 100) / 100,
+    y: Math.round(G.player.y * 100) / 100,
+    health: Math.round(G.player.health),
+    savedAt: Date.now(),
+  };
+  writeSave(save);
+  G.state = m.index === MISSIONS.length - 1 ? 'storyComplete' : 'missionComplete';
+}
+
+export function updateMission(G, dt) {
+  const m = G.mission;
+  if (!m || !m.active || G.state !== 'playing') return;
+  const step = m.def.steps[m.step];
+  if (!step) return;
+  const p = G.player;
+
+  if (step.kind === 'car') {
+    if (p.car) advanceStep(G);
+    return;
+  }
+  if (step.kind === 'sport') {
+    if (p.car && p.car.type === 'sport') advanceStep(G);
+    return;
+  }
+  if (step.kind === 'goto') {
+    const d = Math.hypot(p.x - step.target.x, p.y - step.target.y);
+    if (step.timer) {
+      m.timer -= dt;
+      if (m.timer <= 0) {
+        restartMission(G);
+        return;
+      }
+    }
+    if (d <= step.radius) advanceStep(G);
+    return;
+  }
+  if (step.kind === 'timer') {
+    m.timer -= dt;
+    if (m.timer <= 0) advanceStep(G);
+    return;
+  }
+  if (step.kind === 'kills') {
+    if (m.kills >= step.count) advanceStep(G);
+    return;
+  }
+  if (step.kind === 'stars0') {
+    if (G.wanted.stars === 0) advanceStep(G);
+    return;
+  }
 }
 
 export function missionTarget(G) {
@@ -178,135 +225,25 @@ export function missionTarget(G) {
   if (!m || !m.active) return null;
   const step = m.def.steps[m.step];
   if (!step) return null;
-  if (step.type === 'steal' && m.targetCar) {
-    return { x: m.targetCar.x, y: m.targetCar.y, label: 'Comet GT' };
-  }
-  if (step.at) {
-    const p = step.at(G);
-    return { x: p.x, y: p.y, label: step.text };
+  if (step.kind === 'goto') return { x: step.target.x, y: step.target.y };
+  if (step.kind === 'sport') {
+    const gt = G.cars.find((c) => c.type === 'sport' && !c.dead);
+    return gt ? { x: gt.x, y: gt.y } : null;
   }
   return null;
 }
 
-function stepDone(G) {
+export function objectiveText(G) {
   const m = G.mission;
-  m.step++;
-  if (m.step >= m.def.steps.length) {
-    completeMission(G);
-  } else {
-    startStep(G);
-  }
-}
-
-function completeMission(G) {
-  const m = G.mission;
-  const reward = m.def.reward;
-  G.player.cash += reward;
-  G.audio.missionDone();
-  say(G, m.def.outro);
-  G.events.push({ text: `Mission complete: ${m.def.name} — +$${reward}`, at: G.time });
-  if (m.def.onComplete) m.def.onComplete(G);
-  G.completedMissions.add(m.index);
-  G.mission.active = false;
-  G.missionDone = m.index;
-  G.missionDoneAt = G.time;
-  G.state = 'missionComplete';
-  if (G._autosave) G._autosave();
-  // Next mission starts when the player closes the overlay (main.js).
-}
-
-function failMission(G, reason) {
-  const m = G.mission;
-  if (!m || !m.active || m.failed) return;
-  m.failed = true;
-  m.failedAt = G.time;
-  G.audio.missionFail();
-  G.events.push({ text: `Mission failed: ${reason} — retrying…`, at: G.time });
-}
-
-export function updateMission(G, dt) {
-  const m = G.mission;
-  if (!m || !m.active) return;
-  if (m.failed) {
-    if (G.time - m.failedAt > 2.5) {
-      startMission(G, m.index);
-    }
-    return;
-  }
+  if (!m || !m.active) return 'Free roam — Solmar is yours';
   const step = m.def.steps[m.step];
-  if (!step) return;
-  const p = G.player;
-  const px = p.onFoot ? p.x : p.car ? p.car.x : p.x;
-  const py = p.onFoot ? p.y : p.car ? p.car.y : p.y;
-
-  switch (step.type) {
-    case 'enterCar': {
-      if (!p.onFoot) stepDone(G);
-      break;
-    }
-    case 'goto':
-    case 'driveTo': {
-      const pt = step.at(G);
-      const r = step.radius || 60;
-      const dx = px - pt.x;
-      const dy = py - pt.y;
-      const arrived = step.type === 'driveTo' ? !p.onFoot && dx * dx + dy * dy < r * r : dx * dx + dy * dy < r * r;
-      if (arrived) stepDone(G);
-      break;
-    }
-    case 'steal': {
-      if (p.car === m.targetCar) stepDone(G);
-      else if (!m.targetCar || m.targetCar.dead) failMission(G, 'the Comet GT was destroyed');
-      break;
-    }
-    case 'survive': {
-      m.timer -= dt;
-      if (m.timer <= 0) stepDone(G);
-      break;
-    }
-    case 'deliver': {
-      m.timer -= dt;
-      const pt = step.at(G);
-      const r = step.radius || 60;
-      const dx = px - pt.x;
-      const dy = py - pt.y;
-      if (dx * dx + dy * dy < r * r) stepDone(G);
-      else if (m.timer <= 0) failMission(G, 'the delivery was too slow');
-      break;
-    }
-    case 'kill': {
-      if (m.kills >= step.count) stepDone(G);
-      break;
-    }
-    case 'escape': {
-      if (G.wanted.stars === 0) stepDone(G);
-      break;
-    }
-    default:
-      break;
+  if (!step) return m.def.name;
+  let text = `${m.def.name}: ${step.text}`;
+  if (step.timer && m.timer > 0) {
+    text += ` — ${Math.ceil(m.timer)}s`;
   }
+  if (step.kind === 'kills') {
+    text += ` — ${m.kills}/${step.count}`;
+  }
+  return text;
 }
-
-export function missionObjectiveText(G) {
-  const m = G.mission;
-  if (!m || !m.active) return null;
-  const step = m.def.steps[m.step];
-  if (!step) return null;
-  let text = step.text;
-  if (step.type === 'survive' || step.type === 'deliver') {
-    text += ` — ${Math.max(0, Math.ceil(m.timer))}s`;
-  }
-  if (step.type === 'kill') {
-    text += ` (${Math.min(m.kills, step.count)}/${step.count})`;
-  }
-  return `${m.def.name}: ${text}`;
-}
-
-export function nextMissionIndex(G) {
-  for (let i = 0; i < DEFS.length; i++) {
-    if (!G.completedMissions.has(i)) return i;
-  }
-  return -1;
-}
-
-export { MISSIONS };

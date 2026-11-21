@@ -1,27 +1,24 @@
-// SOLMAR — save.js: the save file in localStorage. Progress is cash, the mission the
-// player is on, which missions are done, and where the player stands. The game
-// autosaves after every mission and saves from the pause menu.
-
-import { SAVE_KEY } from './config.js';
+// Local save in localStorage. One key, one small object: cash, the next
+// mission, how many missions are done, where the player stands, and health.
+export const SAVE_KEY = 'solmar.save.v1';
 
 export function loadSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (typeof data !== 'object' || data === null) return null;
-    return data;
+    const save = JSON.parse(raw);
+    if (typeof save.cash !== 'number' || typeof save.missionIndex !== 'number') return null;
+    return save;
   } catch {
     return null;
   }
 }
 
-export function writeSave(data) {
+export function writeSave(save) {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
-    return true;
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   } catch {
-    return false;
+    // Storage may be unavailable; the game keeps running without it.
   }
 }
 
@@ -29,6 +26,6 @@ export function clearSave() {
   try {
     localStorage.removeItem(SAVE_KEY);
   } catch {
-    // storage unavailable: nothing to clear
+    // Ignore.
   }
 }

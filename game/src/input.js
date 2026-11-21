@@ -1,78 +1,52 @@
-// SOLMAR — input.js: keyboard + mouse state, polled once a frame. Keys are tracked by
-// code (KeyW, ArrowUp, ...) so layouts do not matter. The mouse is tracked in screen
-// space and converted to world space by main.js through the camera.
-
+// Keyboard and mouse state. Keys are tracked by code (KeyW, KeyE, ...)
+// so layouts do not matter. The mouse position is kept in screen pixels
+// and converted to world coordinates by the caller.
 export function createInput(canvas) {
-  const keys = new Set();
-  const justPressed = new Set();
-  const mouse = { x: 0, y: 0, down: false, clicked: false, rightDown: false };
+  const input = {
+    keys: {},
+    pressed: {},
+    // Injected keys: the screenshot staging holds W down for the chase shot.
+    inject: {},
+    mouseX: 0,
+    mouseY: 0,
+    mouseDown: false,
+    mousePressed: false,
+    anyKey: false,
+  };
 
-  function onKeyDown(e) {
-    if (!e.repeat) {
-      keys.add(e.code);
-      justPressed.add(e.code);
-    }
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
       e.preventDefault();
     }
-  }
-  function onKeyUp(e) {
-    keys.delete(e.code);
-  }
-  function onMouseMove(e) {
-    const r = canvas.getBoundingClientRect();
-    mouse.x = e.clientX - r.left;
-    mouse.y = e.clientY - r.top;
-  }
-  function onMouseDown(e) {
+    if (!input.keys[e.code]) input.pressed[e.code] = true;
+    input.keys[e.code] = true;
+    input.anyKey = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    input.keys[e.code] = false;
+  });
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    input.mouseX = e.clientX - rect.left;
+    input.mouseY = e.clientY - rect.top;
+  });
+  canvas.addEventListener('mousedown', (e) => {
     if (e.button === 0) {
-      mouse.down = true;
-      mouse.clicked = true;
+      input.mouseDown = true;
+      input.mousePressed = true;
     }
-    if (e.button === 2) mouse.rightDown = true;
-  }
-  function onMouseUp(e) {
-    if (e.button === 0) mouse.down = false;
-    if (e.button === 2) mouse.rightDown = false;
-  }
-  function onContextMenu(e) {
-    e.preventDefault();
-  }
-  function onBlur() {
-    keys.clear();
-    mouse.down = false;
-    mouse.rightDown = false;
-  }
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) input.mouseDown = false;
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('contextmenu', onContextMenu);
-  window.addEventListener('blur', onBlur);
-
-  return {
-    keys,
-    mouse,
-    // True while any of the given codes is held.
-    held(codes) {
-      for (const c of codes) if (keys.has(c)) return true;
-      return false;
-    },
-    // True only on the frame the key went down.
-    pressed(code) {
-      return justPressed.has(code);
-    },
-    // True if any of the given codes was pressed this frame.
-    pressedAny(codes) {
-      for (const c of codes) if (justPressed.has(c)) return true;
-      return false;
-    },
-    // Called by main.js at the end of each frame.
-    endFrame() {
-      justPressed.clear();
-      mouse.clicked = false;
-    },
+  input.endFrame = () => {
+    input.pressed = {};
+    input.mousePressed = false;
+    input.anyKey = false;
   };
+  input.isDown = (code) => !!input.keys[code] || !!input.inject[code];
+  input.wasPressed = (code) => !!input.pressed[code];
+  return input;
 }

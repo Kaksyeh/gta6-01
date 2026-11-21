@@ -1,95 +1,95 @@
-// SOLMAR — wanted.js: the wanted level. Crimes add heat (0–100); stars are
-// floor(heat / 20), capped at 5. While the player keeps quiet the heat cools and
-// stars fall one at a time. Police cars and foot cops spawn to match the level and
-// despawn when they fall too far behind or the heat dies.
-
-import { WANTED, WORLD, COMBAT } from './config.js';
-import { clamp } from './random.js';
-import { randomRoadPoint, randomSidewalkPoint } from './city.js';
+// The wanted level: heat from 0 to 100, shown as 0 to 5 stars. Heat
+// decays only after a quiet spell, and the police answer in proportion:
+// cars chase the player's ride, foot officers chase the player on foot.
+import { CFG } from './config.js';
 import { spawnPoliceCar } from './vehicles.js';
+import { spawnCop } from './entities.js';
 
 export function createWanted() {
-  return { stars: 0, heat: 0, quietAt: 0, decayAt: 0 };
+  return {
+    heat: 0,
+    stars: 0,
+    quietFor: 99,
+    sirenAt: 0,
+  };
 }
 
-function policeCars(G) {
-  return G.cars.filter((c) => c.kind === 'police' && !c.dead && c.driver !== 'player');
+export function addHeat(G, amount) {
+  const w = G.wanted;
+  w.heat = Math.min(CFG.wanted.max, w.heat + amount);
+  w.quietFor = 0;
+  w.stars = Math.min(5, Math.floor(w.heat / CFG.wanted.perStar));
 }
 
-function spawnSpotNear(G, minD, maxD) {
-  for (let i = 0; i < 10; i++) {
-    const pt = randomRoadPoint(G.rnd);
-    const d = Math.hypot(pt.x - G.player.x, pt.y - G.player.y);
-    if (d >= minD && d <= maxD) return pt;
-  }
-  return null;
+export function setHeat(G, value) {
+  const w = G.wanted;
+  w.heat = Math.max(0, Math.min(CFG.wanted.max, value));
+  w.quietFor = 0;
+  w.stars = Math.min(5, Math.floor(w.heat / CFG.wanted.perStar));
+}
+
+function policeCarCount(G) {
+  let n = 0;
+  for (const c of G.cars) if (c.kind === 'police' && !c.dead) n++;
+  return n;
+}
+
+function footCopCount(G) {
+  let n = 0;
+  for (const p of G.peds) if (p.kind === 'cop' && p.state !== 'dead') n++;
+  return n;
 }
 
 export function updateWanted(G, dt) {
   const w = G.wanted;
-  // Recompute stars from heat (heat only ever rises via addHeat).
-  const stars = Math.min(WANTED.maxStars, Math.floor(w.heat / 20));
-  if (stars !== w.stars) w.stars = stars;
+  w.quietFor += dt;
 
-  // Cooling off: after a quiet spell, lose one star every few seconds.
-  if (w.stars > 0 && G.time - w.quietAt > WANTED.decayDelay) {
-    if (G.time - w.decayAt > WANTED.decayInterval) {
-      w.decayAt = G.time;
-      w.heat = Math.max(0, w.heat - 20);
-      w.stars = Math.min(WANTED.maxStars, Math.floor(w.heat / 20));
-      if (w.stars === 0) {
-        G.events.push({ text: 'You lost the cops. The heat is off — for now.', at: G.time });
-      }
+  // Decay: after a quiet spell, one star fades every few seconds. During
+  // the Heat Wave survive step the heat is locked at five stars.
+  const surviveLock = G.mission && G.mission.def.id === 2 && G.mission.step === 0;
+  if (!surviveLock && w.quietFor > CFG.wanted.decayQuiet && w.heat > 0) {
+    w.heat = Math.max(0, w.heat - (CFG.wanted.perStar / CFG.wanted.decayPerStar) * dt);
+    w.stars = Math.min(5, Math.floor(w.heat / CFG.wanted.perStar));
+  }
+
+  if (w.stars > 0 && G.time - w.sirenAt > 6) {
+    w.sirenAt = G.time;
+    G.audio.siren();
+  }
+
+  // Police cars: one per star, up to five.
+  const wantCars = Math.min(w.stars, CFG.wanted.maxPoliceCars);
+  const haveCars = policeCarCount(G);
+  if (haveCars < wantCars) {
+    const a = G.rng.range(0, Math.PI * 2);
+    const x = G.player.x + Math.cos(a) * CFG.police.spawnDistance;
+    const y = G.player.y + Math.sin(a) * CFG.police.spawnDistance;
+    const clamped = {
+      x: Math.max(40, Math.min(CFG.world.size - 40, x)),
+      y: Math.max(40, Math.min(CFG.world.size - 40, y)),
+    };
+    spawnPoliceCar(G, clamped.x, clamped.y);
+  }
+
+  // Foot officers: only at two stars or more, only while the player walks.
+  const wantCops = w.stars >= CFG.wanted.footCopMinStars
+    ? Math.min(w.stars - 1, CFG.wanted.maxFootCops)
+    : 0;
+  const haveCops = footCopCount(G);
+  if (haveCops < wantCops && G.player.onFoot) {
+    const a = G.rng.range(0, Math.PI * 2);
+    const x = G.player.x + Math.cos(a) * 260;
+    const y = G.player.y + Math.sin(a) * 260;
+    spawnCop(G, x, y);
+  }
+  // Officers hold their ground while the player drives and leave when the
+  // player is far away; they also stand down when the heat clears.
+  for (const p of G.peds) {
+    if (p.kind !== 'cop' || p.state === 'dead') continue;
+    const d = Math.hypot(p.x - G.player.x, p.y - G.player.y);
+    if ((!G.player.onFoot && d > 900) || w.stars === 0) {
+      p.state = 'dead';
+      p.deadAt = G.time - 9; // swept up on the next pass
     }
   }
-
-  // Police cars to match the level.
-  const wantCars = WANTED.carsPerStar[w.stars];
-  const have = policeCars(G);
-  if (have.length < wantCars) {
-    const spot = spawnSpotNear(G, 500, 800);
-    if (spot) spawnPoliceCar(G, spot.x, spot.y);
-  }
-  // Despawn police cars that fell far behind (not the player's own ride).
-  for (const car of have) {
-    const d = Math.hypot(car.x - G.player.x, car.y - G.player.y);
-    if (d > WANTED.despawnDistance) {
-      car.dead = true;
-      car.deadAt = G.time - 30; // pruned on the next pass
-    }
-  }
-
-  // Foot cops to match the level.
-  const wantCops = WANTED.footCopsPerStar[w.stars];
-  const liveCops = G.cops.filter((c) => c.hp > 0);
-  if (liveCops.length < wantCops) {
-    const pt = randomSidewalkPoint(G.rnd);
-    const d = Math.hypot(pt.x - G.player.x, pt.y - G.player.y);
-    if (d > 200 && d < 700) {
-      G.cops.push({
-        id: 9000 + Math.floor(Math.random() * 8999),
-        kind: 'cop',
-        x: pt.x, y: pt.y,
-        angle: 0,
-        hp: COMBAT.copHealth,
-        maxHp: COMBAT.copHealth,
-        punchAt: -99,
-        color: '#20242c',
-        state: 'walk',
-        stateAt: G.time,
-      });
-    }
-  }
-  // When the heat dies, the remaining foot cops walk off.
-  if (w.stars === 0) {
-    G.cops = G.cops.filter((c) => c.hp > 0 && Math.hypot(c.x - G.player.x, c.y - G.player.y) < 500);
-  }
-
-  // Siren loudness follows the nearest police car.
-  let nearest = 1;
-  for (const car of have) {
-    const d = Math.hypot(car.x - G.player.x, car.y - G.player.y);
-    nearest = Math.min(nearest, clamp(d / 900, 0, 1));
-  }
-  G.audio.siren(nearest, w.stars > 0);
 }

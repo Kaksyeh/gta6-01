@@ -1,16 +1,3 @@
-// SOLMAR — Streets of the Sun (make.fun gta6-01 entry).
-// An original 2D top-down open-world crime game: the city of Solmar, cars to steal,
-// police who chase, five story missions, combat, a HUD with a minimap, and a save.
-// The game is this directory's game/ folder, plain static files a desktop browser
-// loads offline (game/index.html and its ES modules, no library and no network
-// request), and this program hands it in: it copies game/ and screenshots/ from
-// beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library.
-//
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-//
 // A working gta6-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
 // modules, no library and no network request), and the program hands it in. It copies game/ and
@@ -52,3 +39,6 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
+
+// SOLMAR entrypoint note: this program copies game/ and screenshots/ to the
+// output directory and writes dossier.json with the kit's buildDossier.

@@ -1,125 +1,83 @@
-// SOLMAR — combat.js: bullets and the guards who shoot back. Bullets fly straight,
-// die on buildings, and hurt cars, pedestrians, cops and guards. Guards (mission 5)
-// stand their ground and fire at the player with deliberately imperfect aim.
+// Combat: the pistol, bullets, and guard fire. Bullets die on walls, so
+// a shot needs a clear line. Guards shoot back and can hit each other.
+import { CFG } from './config.js';
+import { circleHitsBuilding } from './city.js';
+import { damagePerson, scarePeds } from './entities.js';
 
-import { COMBAT } from './config.js';
-import { hitsBuilding } from './city.js';
-import { damageCar, addHeat, spawnParticles, dropPickup } from './entities.js';
-
-function bulletHitsCircle(b, x, y, r) {
-  const dx = b.x - x;
-  const dy = b.y - y;
-  return dx * dx + dy * dy < r * r;
+export function firePlayerBullet(G) {
+  const p = G.player;
+  const bx = p.x + Math.cos(p.angle) * 22;
+  const by = p.y + Math.sin(p.angle) * 22;
+  G.bullets.push({
+    x: bx,
+    y: by,
+    vx: Math.cos(p.angle) * CFG.combat.bulletSpeed,
+    vy: Math.sin(p.angle) * CFG.combat.bulletSpeed,
+    from: 'player',
+    damage: CFG.combat.pistolDamage,
+    life: 2,
+  });
+  G.addHeat(CFG.wanted.shotHeat);
+  scarePeds(G, p.x, p.y, CFG.ped.scareRadius);
+  G.audio.shot();
 }
 
-export function updateBullets(G, dt) {
-  for (const b of G.bullets) {
+export function fireEnemyBullet(G, guard) {
+  const p = G.player;
+  const base = Math.atan2(p.y - guard.y, p.x - guard.x);
+  const spread = (Math.random() - 0.5) * 0.14;
+  const ang = base + spread;
+  G.bullets.push({
+    x: guard.x + Math.cos(ang) * 18,
+    y: guard.y + Math.sin(ang) * 18,
+    vx: Math.cos(ang) * 500,
+    vy: Math.sin(ang) * 500,
+    from: 'guard',
+    damage: CFG.combat.guardDamage,
+    life: 2,
+  });
+}
+
+function updateBullets(G, dt) {
+  for (let i = G.bullets.length - 1; i >= 0; i--) {
+    const b = G.bullets[i];
+    b.life -= dt;
     b.x += b.vx * dt;
     b.y += b.vy * dt;
-    b.life += dt;
-    if (b.life >= b.maxLife) {
-      b.dead = true;
-      continue;
-    }
-    if (hitsBuilding(G.city, b.x, b.y, 2)) {
-      spawnParticles(G, b.x, b.y, { count: 3, color: '#ffd23e', speed: 120, life: 0.25, size: 2 });
-      b.dead = true;
-      continue;
-    }
-    // Cars.
-    let hit = false;
-    for (const car of G.cars) {
-      if (car.dead) continue;
-      if (bulletHitsCircle(b, car.x, car.y, 26)) {
-        damageCar(G, car, b.damage, b.from);
-        if (b.from === 'player' && car.kind === 'police') addHeat(G, 6);
-        spawnParticles(G, b.x, b.y, { count: 4, color: '#ffd23e', speed: 130, life: 0.3, size: 2 });
-        hit = true;
-        break;
-      }
-    }
-    if (hit) {
-      b.dead = true;
-      continue;
-    }
-    // People: pedestrians, cops and guards.
-    const people = [...G.peds, ...G.cops];
-    for (const t of people) {
-      if (t.state === 'dead' || t.hp <= 0) continue;
-      if (bulletHitsCircle(b, t.x, t.y, 12)) {
-        t.hp -= b.damage;
-        spawnParticles(G, t.x, t.y, { count: 5, color: '#c94f43', speed: 110, life: 0.4, size: 3 });
-        if (t.hp <= 0) {
-          t.state = 'dead';
-          t.stateAt = G.time;
-          if (b.from === 'player') {
-            if (t.kind === 'cop') {
-              addHeat(G, 40);
-              dropPickup(G, t.x, t.y, 'cash', 60);
-            } else if (t.kind === 'guard') {
-              // Guard kills are the mission objective (M5) — they add only a
-              // little heat, so the shootout stays a duel with the guards
-              // instead of summoning a foot-cop swarm mid-fight. The escape
-              // step adds the big heat (80) for the chase.
-              addHeat(G, 5);
-              dropPickup(G, t.x, t.y, 'cash', 80);
-              if (G.mission) G.mission.kills = (G.mission.kills || 0) + 1;
-            } else {
-              addHeat(G, 22);
-              dropPickup(G, t.x, t.y, 'cash', 25);
-            }
-          }
-        } else if (t.kind === 'ped') {
-          t.state = 'flee';
-          t.stateAt = G.time;
-          t.fleeFrom = { x: b.x - b.vx * 0.05, y: b.y - b.vy * 0.05 };
+    let dead = b.life <= 0;
+    if (!dead && (b.x < 0 || b.y < 0 || b.x > CFG.world.size || b.y > CFG.world.size)) dead = true;
+    if (!dead && circleHitsBuilding(G.city, b.x, b.y, 2)) dead = true;
+    if (!dead && b.from === 'player') {
+      for (const person of G.peds) {
+        if (person.state === 'dead') continue;
+        if (Math.hypot(person.x - b.x, person.y - b.y) < person.radius + 4) {
+          damagePerson(G, person, b.damage);
+          dead = true;
+          break;
         }
-        b.dead = true;
-        break;
       }
     }
-    if (b.dead) continue;
-    // The player, when the bullet is not theirs.
-    if (b.from !== 'player' && G.player.onFoot) {
+    if (!dead && b.from === 'guard') {
       const p = G.player;
-      if (bulletHitsCircle(b, p.x, p.y, 13)) {
-        // hurtPlayer lives in entities.js; import it lazily to avoid a cycle.
-        G._hurtPlayer(b.damage, b.from === 'guard' ? 'guard' : 'cop');
-        spawnParticles(G, p.x, p.y, { count: 4, color: '#e5534b', speed: 100, life: 0.3, size: 3 });
-        b.dead = true;
+      if (p.health > 0 && Math.hypot(p.x - b.x, p.y - b.y) < p.radius + 4) {
+        G.hurtPlayer(b.damage, 'guard');
+        dead = true;
       }
     }
+    if (dead) G.bullets.splice(i, 1);
   }
-  G.bullets = G.bullets.filter((b) => !b.dead);
 }
 
-// Guards hold a position and shoot at the player when close enough.
-export function updateGuards(G, dt) {
+export function updateCombat(G, dt) {
+  G.fireCooldown -= dt;
   const p = G.player;
-  for (const g of G.peds) {
-    if (g.kind !== 'guard' || g.state === 'dead' || g.hp <= 0) continue;
-    const tx = p.onFoot ? p.x : p.car ? p.car.x : p.x;
-    const ty = p.onFoot ? p.y : p.car ? p.car.y : p.y;
-    const d = Math.hypot(tx - g.x, ty - g.y);
-    if (d > 460) continue;
-    const want = Math.atan2(ty - g.y, tx - g.x);
-    g.angle = want;
-    if (G.time - g.shootAt > 1.15) {
-      g.shootAt = G.time;
-      const spread = (Math.random() - 0.5) * 0.22;
-      const a = want + spread;
-      G.bullets.push({
-        x: g.x + Math.cos(a) * 18,
-        y: g.y + Math.sin(a) * 18,
-        vx: Math.cos(a) * 780,
-        vy: Math.sin(a) * 780,
-        life: 0,
-        maxLife: 0.6,
-        damage: 9,
-        from: 'guard',
-      });
-      G.audio.enemyShot();
-      spawnParticles(G, g.x + Math.cos(a) * 20, g.y + Math.sin(a) * 20, { count: 2, color: '#ffd23e', speed: 90, life: 0.2, size: 2 });
-    }
+  if (G.state !== 'playing' || !p.onFoot || !p.hasPistol) {
+    updateBullets(G, dt);
+    return;
   }
+  if (G.input.mouseDown && G.fireCooldown <= 0) {
+    G.fireCooldown = CFG.combat.fireInterval;
+    firePlayerBullet(G);
+  }
+  updateBullets(G, dt);
 }
